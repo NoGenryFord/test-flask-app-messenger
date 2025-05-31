@@ -29,4 +29,4 @@ def handle_message(data):
 
 if __name__ == '__main__': # Run the application
     #app.run(debug=True) # Set debug=True for development mode
-    socketio.run(app, host='0.0.0.0', port=5000,debug=True) # Use SocketIO to run the Flask app
+    socketio.run(app, host='0.0.0.0', port=5000, debug=True) # Use SocketIO to run the Flask app
