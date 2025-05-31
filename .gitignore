@@ -1,0 +1,30 @@
+# Virtual environment files
+venv/
+.venv/
+env/
+envs/
+ENV/
+pyvenv.cfg
+
+# Folder for Python bytecode files
+__pycache__/
+*.pyc
+*.pyo
+
+# Package files 
+# *.egg
+# *.whl
+# .pytest_cache
+# .mypy_cache
+# htmlcov/
+# .coverage*
+# .tox/
+# .nox/
+# .local
+
+# Other common files to ignore
+*.log
+*.tmp
+*.swp
+.DS_Store       # macOS
+.Trashes
