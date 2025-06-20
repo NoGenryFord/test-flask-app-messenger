@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Chat - {{ room_name }}</title>
+</head>
+<body>
+    <h1>Room: {{ room_name }}</h1>
+    <a href="/rooms">Back to Rooms</a>
+    <hr>
+
+    <div id="messages" style="height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px;">
+        {% for message in messages %}
+            <p>
+                <strong>{{ message.author.username }}</strong> 
+                ({{ message.timestamp.strftime('%H:%M') }}): 
+                {{ message.content }}
+            </p>
+        {% endfor %}
+    </div>
+
+    <div id="messageForm">
+        <input type="text" id="messageInput" placeholder="Type your message...">
+        <button id="sendButton">Send</button>
+    </div>
+
+    <div id="room-name" data-room="{{ room_name }}"></div>
+    <div id="current-user" data-username="{{ current_user }}"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
