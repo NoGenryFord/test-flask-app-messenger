@@ -1,32 +1,62 @@
 <!DOCTYPE html>
-<html>
-<head>
-    <title>Chat - {{ room_name }}</title>
-</head>
-<body>
-    <h1>Room: {{ room_name }}</h1>
-    <a href="/rooms">Back to Rooms</a>
-    <hr>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Чат - {{ room_name }}</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="nav-content">
+        <div class="nav-brand">🐯 Tiger Messenger</div>
+        <div class="nav-links">
+          <span>💬 {{ room_name }}</span>
+          <a href="/rooms" class="btn btn-secondary">← Назад до кімнат</a>
+        </div>
+      </div>
+    </nav>
 
-    <div id="messages" style="height: 400px; overflow-y: auto; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px;">
-        {% for message in messages %}
-            <p>
-                <strong>{{ message.author.username }}</strong> 
-                ({{ message.timestamp.strftime('%H:%M') }}): 
-                {{ message.content }}
-            </p>
-        {% endfor %}
-    </div>
+    <div class="container">
+      <div class="chat-container">
+        <div class="messages-container" id="messages">
+          {% for message in messages %}
+          <div
+            class="message {% if message.author.username == current_user %}sent{% else %}received{% endif %}"
+          >
+            <div class="message-header">
+              <strong>{{ message.author.username }}</strong>
+              <span>{{ message.timestamp.strftime('%H:%M') }}</span>
+            </div>
+            <div class="message-content">{{ message.content }}</div>
+          </div>
+          {% endfor %}
+        </div>
 
-    <div id="messageForm">
-        <input type="text" id="messageInput" placeholder="Type your message...">
-        <button id="sendButton">Send</button>
+        <div class="message-input-container" id="messageForm">
+          <input
+            type="text"
+            id="messageInput"
+            class="message-input"
+            placeholder="Введіть ваше повідомлення..."
+          />
+          <button id="sendButton" class="btn btn-primary">Надіслати</button>
+        </div>
+      </div>
     </div>
 
     <div id="room-name" data-room="{{ room_name }}"></div>
     <div id="current-user" data-username="{{ current_user }}"></div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
-</body>
+  </body>
 </html>
