@@ -3,6 +3,7 @@ from flask import Flask, render_template, request, session, redirect, url_for, f
 from flask_socketio import SocketIO, send, emit, join_room, leave_room
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+import threading
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -14,10 +15,26 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
 # Initialize SocketIO with the Flask app
-socketio = SocketIO(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Global variable: Dictionary to keep track of online users (session_id: username)
+# Thread-safe dictionary to keep track of online users (session_id: username)
 online_users = {}
+online_users_lock = threading.Lock()
+
+# Function to safely manage online users
+def add_online_user(session_id, username):
+    with online_users_lock:
+        online_users[session_id] = username
+        return list(set(online_users.values()))  # Remove duplicates
+
+def remove_online_user(session_id):
+    with online_users_lock:
+        username = online_users.pop(session_id, None)
+        return username, list(set(online_users.values()))
+
+def get_online_users():
+    with online_users_lock:
+        return list(set(online_users.values()))
 
 # Define User model for the database
 class User(db.Model):
@@ -94,8 +111,9 @@ def create_room():
             return redirect(url_for('rooms_page'))
             
         # Create a unique room name for the private chat
-        users = sorted([current_user.username, recipient_name])
-        room_name = f'private_{users[0]}_{users[1]}'
+        usernames = [current_user.username, recipient_name]
+        usernames.sort()
+        room_name = f'private_{usernames[0]}_{usernames[1]}'
 
         # Check if such a chat already exists
         existing_room = ChatRoom.query.filter_by(name=room_name).first()
@@ -171,9 +189,9 @@ def rooms_page():
         flash('Session expired. Please login again.', 'error')
         return redirect(url_for('login_page'))
 
-    # Use set to remove duplicates
-    online_users_list = list(set(online_users.values()))
-    # Delete the current user from the online users list if they are present
+    # Get online users list safely
+    online_users_list = get_online_users()
+    # Remove the current user from the online users list
     if current_user.username in online_users_list:
         online_users_list.remove(current_user.username)
     
@@ -201,36 +219,42 @@ def chat_page(room_name):
     messages = Message.query.filter_by(room_id=room.id).order_by(Message.timestamp.asc()).all()
     
     return render_template('chat.html', 
-                         room_name=room_name, 
+                         room_name=room_name,
                          messages=messages,
-                         current_user=session.get('username'))
+                         current_user=current_user.username)
 
-# Define route for user registration page
+# Define route for deleting a chat
 @app.route('/delete_chat/<int:chat_id>', methods=['POST'])
 def delete_chat(chat_id):
     if not session.get('user_id'):
         return redirect(url_for('login_page'))
     
-    chat = db.session.get(ChatRoom, chat_id)
-    if not chat:
-        flash('Chat not found.', 'error')
+    current_user = db.session.get(User, session['user_id'])
+    room = ChatRoom.query.get_or_404(chat_id)
+    
+    # Check if user is the creator of the group or if it's a private chat
+    if room.is_group and room.created_by != current_user.id:
+        flash('Only the group creator can delete the group.', 'error')
         return redirect(url_for('rooms_page'))
-
-    # Check if the user can delete the chat
-    if chat.created_by == session['user_id'] or not chat.is_group:
-        try:
-            # Delete all messages
-            db.session.query(Message).filter_by(room_id=chat.id).delete()
-            # Delete the chat room
-            db.session.delete(chat)
-            db.session.commit()
-            flash('Chat deleted successfully!', 'success')
-        except Exception as e:
-            db.session.rollback()
-            flash('Failed to delete chat.', 'error')
-            print(f"Error deleting chat: {str(e)}")
-    else:
-        flash('You do not have permission to delete this chat.', 'error')
+    
+    # Remove user from the chat
+    if current_user in room.users:
+        room.users.remove(current_user)
+        
+        # If no users left, delete the room
+        if not room.users:
+            db.session.delete(room)
+        else:
+            # Add system message about user leaving
+            system_message = Message(
+                content=f'{current_user.username} left the chat',
+                user_id=current_user.id,
+                room_id=room.id
+            )
+            db.session.add(system_message)
+        
+        db.session.commit()
+        flash('Chat deleted successfully!', 'success')
     
     return redirect(url_for('rooms_page'))
 
@@ -239,24 +263,25 @@ def delete_chat(chat_id):
 def register():
     username = request.form.get('username')
     password = request.form.get('password')
-
-    # Check if username and password are provided
+    
     if not username or not password:
-        flash('Username and password cannot be empty!', 'error')
+        flash('Username and password are required!', 'error')
         return redirect(url_for('login_page'))
-
+    
     # Check if user already exists
-    if User.query.filter_by(username=username).first():
-        flash(f'User {username} already exists! Please choose another username.', 'error')
+    existing_user = User.query.filter_by(username=username).first()
+    if existing_user:
+        flash('Username already exists!', 'error')
         return redirect(url_for('login_page'))
-
+    
     # Create new user
+    hashed_password = generate_password_hash(password)
+    new_user = User(username=username, password=hashed_password)
+    
     try:
-        hashed_password = generate_password_hash(password)
-        new_user = User(username=username, password=hashed_password)
         db.session.add(new_user)
         db.session.commit()
-        flash(f'User {username} successfully registered! You can now log in.', 'success')
+        flash('Registration successful! Please login.', 'success')
     except Exception as e:
         db.session.rollback()
         flash('Registration failed. Please try again.', 'error')
@@ -269,33 +294,22 @@ def register():
 def login():
     username = request.form.get('username')
     password = request.form.get('password')
-
-    # Check if username and password are provided
+    
     if not username or not password:
-        flash('Username and password cannot be empty!', 'error')
+        flash('Username and password are required!', 'error')
         return redirect(url_for('login_page'))
-
-    # Find user
+    
+    # Find user by username
     user = User.query.filter_by(username=username).first()
-
-    if not user:
-        flash(f'User {username} does not exist!', 'error')
-        return redirect(url_for('login_page'))
-
-    if not check_password_hash(user.password, password):
-        flash('Incorrect password!', 'error')
-        return redirect(url_for('login_page'))
-
-    # Successful login
-    try:
+    
+    if user and check_password_hash(user.password, password):
+        # Store user info in session
         session['user_id'] = user.id
         session['username'] = user.username
-        print(f"User logged in. Session user_id: {session['user_id']}, username: {session['username']}")
-        flash(f'Welcome back, {user.username}!', 'success')
+        flash('Login successful!', 'success')
         return redirect(url_for('rooms_page'))
-    except Exception as e:
-        flash('Login failed. Please try again.', 'error')
-        print(f"Login error: {str(e)}")
+    else:
+        flash('Invalid username or password!', 'error')
         return redirect(url_for('login_page'))
 
 # Add logout route
@@ -314,17 +328,20 @@ def handle_connect():
     username = session.get('username')
 
     if user_id and username:
-        # Add user to the online users dictionary
-        online_users[session_id] = username
+        # Add user to the online users dictionary safely
+        online_users_list = add_online_user(session_id, username)
 
-        # Notify all users about the new user
-        emit('user_connected', {'username': username}, broadcast=True)
+        # Notify all users about the new user (except the new user)
+        emit('user_connected', {'username': username}, broadcast=True, include_self=False)
 
-        # Send updated user list to all users
-        emit('update_user_list', list(online_users.values()), broadcast=True)
+        # Send updated user list to all users (except the new user)
+        emit('update_user_list', online_users_list, broadcast=True, include_self=False)
+        
+        # Send current user list to the new user only
+        emit('update_user_list', online_users_list, to=session_id)
         
         print(f'User {username} connected with session ID: {session_id}')
-        print(f'Current online users: {online_users}')
+        print(f'Current online users: {online_users_list}')
 
         # Send chat history only to the new user
         history_messages = Message.query.filter_by(user_id=user_id).order_by(Message.timestamp.asc()).all()
@@ -342,17 +359,17 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     session_id = request.sid
-    username = online_users.pop(session_id, None)
+    username, online_users_list = remove_online_user(session_id)
     
     if username:
         # Notify all users about the disconnection
-        emit('user_disconnected', {'username': username}, broadcast=True)
+        emit('user_disconnected', {'username': username}, broadcast=True, include_self=False)
 
         # Send updated user list to all users
-        emit('update_user_list', list(online_users.values()), broadcast=True)
+        emit('update_user_list', online_users_list, broadcast=True, include_self=False)
         
         print(f'User {username} disconnected with session ID: {session_id}')
-        print(f'Current online users: {online_users}')
+        print(f'Current online users: {online_users_list}')
     else:
         print(f'Anonymous client disconnected with session ID: {session_id}')
 
